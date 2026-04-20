@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
+import os
 
-BASE = "/Users/WILL/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data"
+BASE = os.environ.get("KAGGLE_DATA_PATH", "/Users/WILL/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data")
 
 fixtures = pd.read_csv(f"{BASE}/fixtures.csv")
 teams = pd.read_csv(f"{BASE}/teams.csv")
