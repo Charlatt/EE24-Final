@@ -59,6 +59,12 @@ pl = pl[[
     "away_goals"
 ]].copy()
 
+# Converts teams to numeric indices
+teams = sorted(set(pl["home_team"]).union(pl["away_team"]))
+team_index = {team: i for i, team in enumerate(teams)}
+
+num_teams = len(teams)
+
 # Basic checks
 # print(pl.head())
 # print("Matches:", len(pl))
@@ -66,8 +72,13 @@ pl = pl[[
 # print("Average home goals:", pl["home_goals"].mean())
 # print("Average away goals:", pl["away_goals"].mean())
 
-
 # Main Code
+
+# Need to change this part to infer attack and defensive strengths to maximize probability of
+# getting correct scoreline using MLE instead of calculating strengths
+
+
+
 # Create long-format dataset
 home = pl[['home_team', 'home_goals', 'away_goals']].copy()
 home.columns = ['team', 'goals_scored', 'goals_conceded']
