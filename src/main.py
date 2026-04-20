@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-BASE = "/Users/WILL/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data"
+BASE = "/Users/bradyk/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/527/base_data"
 
 fixtures = pd.read_csv(f"{BASE}/fixtures.csv")
 teams = pd.read_csv(f"{BASE}/teams.csv")
