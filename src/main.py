@@ -3,9 +3,12 @@ import numpy as np
 import os
 from scipy.optimize import minimize
 from scipy.stats import poisson
-from simulation import simulate
+from simulation import results, simulate_one_team, expected_points_one_team, simulate
+import matplotlib.pyplot as plt
 
-BASE = os.environ.get("KAGGLE_DATA_PATH", "/Users/WILL/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data")
+
+
+BASE = os.environ.get("KAGGLE_DATA_PATH", "/Users/bradyk/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/527/base_data")
 
 fixtures = pd.read_csv(f"{BASE}/fixtures.csv")
 teams = pd.read_csv(f"{BASE}/teams.csv")
@@ -15,7 +18,11 @@ status = pd.read_csv(f"{BASE}/status.csv")
 # Find the correct seasonType for 2024-25 EPL
 pl_rows = leagues[leagues["leagueId"] == 700].copy()
 
-SEASON_TYPE = 12654
+#print("Premier League rows:")
+#print(pl_rows[["year", "seasonName", "seasonSlug", "seasonType", "leagueId"]])
+
+SEASON_TYPE_26 = 13481 # 13481 2025-26 Premier League Season
+SEASON_TYPE = 12654 #2024-25 Premier League Season
 
 # Convert dates
 fixtures["date"] = pd.to_datetime(fixtures["date"])
@@ -61,6 +68,12 @@ pl = pl[[
     "away_goals"
 ]].copy()
 
+# ** 2025 - 2026 data ** 
+
+
+## 
+
+
 # Converts teams to numeric indices
 teams = sorted(set(pl["home_team"]).union(pl["away_team"]))
 team_index = {team: i for i, team in enumerate(teams)}
@@ -82,12 +95,13 @@ def log_likelihood(theta, home_index, away_index, home_goals, away_goals):
     # Compute lambdas for every match at once
     lambda_home = np.exp(a[home_index] - d[away_index] + h)
     lambda_away = np.exp(a[away_index] - d[home_index])
-    
+
     # Log-likelihood over all 380 matches
     ll = (poisson.logpmf(home_goals, lambda_home).sum() +
           poisson.logpmf(away_goals, lambda_away).sum())
-    
     return -ll
+
+# Main Code
 
 # Converts indices of teams + goals scored into array
 home_index = np.array([team_index[t] for t in pl["home_team"]])
@@ -97,6 +111,7 @@ away_goals = np.array(pl["away_goals"]).astype(int)
 
 # Initial guess of all zeroes
 theta0 = np.zeros(2 * num_teams + 1)
+# theta0 = np.zeros(2 * (num_teams - 1) + 1)
 
 # Determines reuslt based on arguments, optimization method, and improvmenet minimum
 result = minimize(
@@ -111,7 +126,7 @@ theta_hat = result.x # Best theta value
 a_hat, d_hat, h_hat = unpack(theta_hat) 
 
 # Returns lambda for home and away team with mle estimation
-# Lambda is the expecgted number of goals each team scores
+# Lambda is the expected number of goals each team scores
 def find_mle(home_team, away_team):
     home = team_index[home_team]
     away = team_index[away_team]
@@ -121,11 +136,37 @@ def find_mle(home_team, away_team):
 
     return lambda_home, lambda_away
 
-# Find win probabilites and expected goals scored on 24/25 season
-result = simulate("Arsenal", "Chelsea", 10000, find_mle)
-for key, value in result.items():
-    print(f"{key}: {value:.3f}")
 
 
+### PART 1 ###
+# Print win probabilites and expected goals scored on 24/25 season
+match1 = results("Tottenham Hotspur", "Arsenal", find_mle)
+for key, value in match1.items():
+    print(f"{key}: {value:.2f}")
+match2 = results("Manchester United", "Manchester City", find_mle)
+for key, value in match2.items():
+    print(f"{key}: {value:.2f}")
+match3 = results("Liverpool", "Everton", find_mle)
+for key, value in match3.items():
+    print(f"{key}: {value:.2f}")
 
 
+### PART 2 ###
+# Print expected number of points for a given team
+input_team = "Tottenham Hotspur"
+points = simulate_one_team(input_team, teams, find_mle)
+print(input_team, "expected points:", points)
+    
+
+### Part 3 ###
+# Print expected table based on all of the results
+print("\nExpected table:")
+table = []
+for team in teams:
+    pts = expected_points_one_team(team, teams, find_mle)
+    table.append((team, pts))
+
+table.sort(key=lambda x: x[1], reverse=True)
+
+for team, pts in table:
+    print(f"{team}: {pts}")
