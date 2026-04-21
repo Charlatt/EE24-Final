@@ -4,8 +4,19 @@ import os
 from scipy.optimize import minimize
 from scipy.stats import poisson
 from simulation import simulate
+from currentSeason import simulate_remaining
+from stats import unpack
+from stats import log_likelihood
+from currentSeason import url_26
+from currentSeason import plot_simulation_results
 
-BASE = os.environ.get("KAGGLE_DATA_PATH", "/Users/WILL/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data")
+
+# Fix - let kagglehub find it automatically
+import kagglehub
+path = kagglehub.dataset_download("excel4soccer/espn-soccer-data")
+BASE = os.path.join(path, "base_data")
+
+# BASE = os.environ.get("KAGGLE_DATA_PATH", "/Users/loker/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data")
 
 fixtures = pd.read_csv(f"{BASE}/fixtures.csv")
 teams = pd.read_csv(f"{BASE}/teams.csv")
@@ -15,7 +26,11 @@ status = pd.read_csv(f"{BASE}/status.csv")
 # Find the correct seasonType for 2024-25 EPL
 pl_rows = leagues[leagues["leagueId"] == 700].copy()
 
+print("Premier League rows:")
+print(pl_rows[["year", "seasonName", "seasonSlug", "seasonType", "leagueId"]])
+
 SEASON_TYPE = 12654
+SEASON_TYPE_26 = 13481 # 13481 2025-26 Premier League Season
 
 # Convert dates
 fixtures["date"] = pd.to_datetime(fixtures["date"])
@@ -61,6 +76,45 @@ pl = pl[[
     "away_goals"
 ]].copy()
 
+## *** 2025-2026 MLE
+
+# Name map from standings to team_index_26 names
+# Print teams_26 to verify these match exactly
+name_map_sim = {
+    "Arsenal":                "Arsenal",
+    "Manchester City":        "Manchester City",
+    "Manchester United":      "Manchester United",
+    "Aston Villa":            "Aston Villa",
+    "Liverpool":              "Liverpool",
+    "Chelsea":                "Chelsea",
+    "Brentford":              "Brentford",
+    "Bournemouth":            "Bournemouth",
+    "Brighton":               "Brighton",
+    "Everton":                "Everton",
+    "Sunderland":             "Sunderland",
+    "Fulham":                 "Fulham",
+    "Crystal Palace":         "Crystal Palace",
+    "Newcastle United":       "Newcastle United",
+    "Leeds":           "Leeds",
+    "Nottingham Forest":      "Nottingham Forest",
+    "West Ham":               "West Ham",
+    "Tottenham":              "Tottenham",
+    "Burnley":                "Burnley",
+    "Wolverhampton Wanderers":"Wolverhampton Wanderers",
+}
+
+raw_26_all = pd.read_csv(url_26)
+
+# Rows without scores = future fixtures
+# Remaining fixtures from matchday 34 onwards (after April 20, 2026)
+
+
+title_count, top4_count, relegated_count = simulate_remaining(n=10000)
+
+
+
+plot_simulation_results(title_count, top4_count, relegated_count, n=10000)
+
 # Converts teams to numeric indices
 teams = sorted(set(pl["home_team"]).union(pl["away_team"]))
 team_index = {team: i for i, team in enumerate(teams)}
@@ -68,26 +122,6 @@ num_teams = len(teams)
 
 # Main Code
 
-# Returns attack strength, defensive strength, and home advantage
-def unpack(theta):
-    a = theta[:num_teams] # positions 0-19
-    d = theta[num_teams:2 * num_teams] # positions 20-39
-    h = theta[-1] # position 40
-    return a, d, h
-
-# Return log-likelihood
-def log_likelihood(theta, home_index, away_index, home_goals, away_goals):
-    a, d, h = unpack(theta)
-    
-    # Compute lambdas for every match at once
-    lambda_home = np.exp(a[home_index] - d[away_index] + h)
-    lambda_away = np.exp(a[away_index] - d[home_index])
-    
-    # Log-likelihood over all 380 matches
-    ll = (poisson.logpmf(home_goals, lambda_home).sum() +
-          poisson.logpmf(away_goals, lambda_away).sum())
-    
-    return -ll
 
 # Converts indices of teams + goals scored into array
 home_index = np.array([team_index[t] for t in pl["home_team"]])
@@ -102,13 +136,13 @@ theta0 = np.zeros(2 * num_teams + 1)
 result = minimize(
     log_likelihood,
     theta0,
-    args = (home_index, away_index, home_goals, away_goals),
+    args = (home_index, away_index, home_goals, away_goals, num_teams),
     method = "L-BFGS-B",
     options = {"maxiter": 5000, "ftol": 1e-12}
 )
 
 theta_hat = result.x # Best theta value
-a_hat, d_hat, h_hat = unpack(theta_hat) 
+a_hat, d_hat, h_hat = unpack(theta_hat, num_teams) 
 
 # Returns lambda for home and away team with mle estimation
 # Lambda is the expecgted number of goals each team scores
@@ -122,9 +156,9 @@ def find_mle(home_team, away_team):
     return lambda_home, lambda_away
 
 # Find win probabilites and expected goals scored on 24/25 season
-result = simulate("Arsenal", "Chelsea", 10000, find_mle)
-for key, value in result.items():
-    print(f"{key}: {value:.3f}")
+# result = simulate("Arsenal", "Chelsea", 10000, find_mle)
+# for key, value in result.items():
+#     print(f"{key}: {value:.3f}")
 
 
 
