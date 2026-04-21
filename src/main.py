@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import os
+from scipy.optimize import minimize
+from scipy.stats import poisson
+from simulation import simulate
 
 BASE = os.environ.get("KAGGLE_DATA_PATH", "/Users/WILL/.cache/kagglehub/datasets/excel4soccer/espn-soccer-data/versions/526/base_data")
 
@@ -11,8 +14,6 @@ status = pd.read_csv(f"{BASE}/status.csv")
 
 # Find the correct seasonType for 2024-25 EPL
 pl_rows = leagues[leagues["leagueId"] == 700].copy()
-print("Premier League rows:")
-print(pl_rows[["year", "seasonName", "seasonSlug", "seasonType", "leagueId"]])
 
 SEASON_TYPE = 12654
 
@@ -25,7 +26,7 @@ pl = fixtures[
     (fixtures["seasonType"] == SEASON_TYPE)
 ].copy()
 
-# Keep only completed matches (I think 28?)
+# Keep only completed matches (28)
 pl = pl[pl["statusId"] == 28].copy()
 
 # Merge team names
@@ -33,21 +34,21 @@ teams_small = teams[["teamId", "displayName"]].copy()
 
 pl = pl.merge(
     teams_small,
-    left_on="homeTeamId",
-    right_on="teamId",
-    how="left"
-).rename(columns={"displayName": "home_team"})
+    left_on = "homeTeamId",
+    right_on = "teamId",
+    how = "left"
+).rename(columns  ={"displayName": "home_team"})
 
 pl = pl.merge(
     teams_small,
-    left_on="awayTeamId",
-    right_on="teamId",
-    how="left",
-    suffixes=("", "_away")
-).rename(columns={"displayName": "away_team"})
+    left_on = "awayTeamId",
+    right_on = "teamId",
+    how = "left",
+    suffixes = ("", "_away")
+).rename(columns = {"displayName": "away_team"})
 
 # Rename scores and keep only needed columns
-pl = pl.rename(columns={
+pl = pl.rename(columns = {
     "homeTeamScore": "home_goals",
     "awayTeamScore": "away_goals"
 })
@@ -63,101 +64,68 @@ pl = pl[[
 # Converts teams to numeric indices
 teams = sorted(set(pl["home_team"]).union(pl["away_team"]))
 team_index = {team: i for i, team in enumerate(teams)}
-
 num_teams = len(teams)
-
-# Basic checks
-# print(pl.head())
-# print("Matches:", len(pl))
-# print("Unique teams:", len(set(pl["home_team"]).union(set(pl["away_team"]))))
-# print("Average home goals:", pl["home_goals"].mean())
-# print("Average away goals:", pl["away_goals"].mean())
 
 # Main Code
 
-# Need to change this part to infer attack and defensive strengths to maximize probability of
-# getting correct scoreline using MLE instead of calculating strengths
+# Returns attack strength, defensive strength, and home advantage
+def unpack(theta):
+    a = theta[:num_teams] # positions 0-19
+    d = theta[num_teams:2 * num_teams] # positions 20-39
+    h = theta[-1] # position 40
+    return a, d, h
 
-
-
-# Create long-format dataset
-home = pl[['home_team', 'home_goals', 'away_goals']].copy()
-home.columns = ['team', 'goals_scored', 'goals_conceded']
-
-away = pl[['away_team', 'away_goals', 'home_goals']].copy()
-away.columns = ['team', 'goals_scored', 'goals_conceded']
-
-teams_long = pd.concat([home, away])
-
-# Compute averages
-team_stats = teams_long.groupby('team').mean()
-
-# League averages
-league_avg_scored = teams_long['goals_scored'].mean()
-league_avg_conceded = teams_long['goals_conceded'].mean()
-
-# Compute strengths
-team_stats['O'] = np.log(team_stats['goals_scored'] / league_avg_scored)
-team_stats['D'] = np.log(team_stats['goals_conceded'] / league_avg_conceded)
-
-print(team_stats.head())
-
-mean_home = pl['home_goals'].mean()
-mean_away = pl['away_goals'].mean()
-
-H = np.log(mean_home / mean_away)
-
-print("Home advantage H:", H)
-
-def predict_lambda(home_team, away_team):
-    O_home = team_stats.loc[home_team, 'O']
-    D_home = team_stats.loc[home_team, 'D']
-    O_away = team_stats.loc[away_team, 'O']
-    D_away = team_stats.loc[away_team, 'D']
+# Return log-likelihood
+def log_likelihood(theta, home_index, away_index, home_goals, away_goals):
+    a, d, h = unpack(theta)
     
-    lambda_home = mean_home * np.exp(O_home - D_away)
-    lambda_away = mean_away * np.exp(O_away - D_home)
+    # Compute lambdas for every match at once
+    lambda_home = np.exp(a[home_index] - d[away_index] + h)
+    lambda_away = np.exp(a[away_index] - d[home_index])
     
-    return lambda_home, lambda_away
-
-lh, la = predict_lambda("Arsenal", "Chelsea")
-print("Expected goals:", lh, la)
-
-def simulate_match(home_team, away_team):
-    lh, la = predict_lambda(home_team, away_team)
+    # Log-likelihood over all 380 matches
+    ll = (poisson.logpmf(home_goals, lambda_home).sum() +
+          poisson.logpmf(away_goals, lambda_away).sum())
     
-    home_goals = np.random.poisson(lh)
-    away_goals = np.random.poisson(la)
-    
-    return home_goals, away_goals
+    return -ll
 
-def simulate_many(home_team, away_team, n=5000):
-    results = [simulate_match(home_team, away_team) for _ in range(n)]
-    
-    home = np.array([r[0] for r in results])
-    away = np.array([r[1] for r in results])
-    
-    return {
-        "home_win": np.mean(home > away),
-        "draw": np.mean(home == away),
-        "away_win": np.mean(home < away)
-    }
+# Converts indices of teams + goals scored into array
+home_index = np.array([team_index[t] for t in pl["home_team"]])
+away_index = np.array([team_index[t] for t in pl["away_team"]])
+home_goals = np.array(pl["home_goals"]).astype(int)
+away_goals = np.array(pl["away_goals"]).astype(int)
 
-simulate_many("Arsenal", "Manchester City")
+# Initial guess of all zeroes
+theta0 = np.zeros(2 * num_teams + 1)
 
-
-pl[['lambda_home', 'lambda_away']] = pl.apply(
-    lambda row: pd.Series(predict_lambda(row['home_team'], row['away_team'])),
-    axis=1
+# Determines reuslt based on arguments, optimization method, and improvmenet minimum
+result = minimize(
+    log_likelihood,
+    theta0,
+    args = (home_index, away_index, home_goals, away_goals),
+    method = "L-BFGS-B",
+    options = {"maxiter": 5000, "ftol": 1e-12}
 )
 
-print("Predicted home:", pl['lambda_home'].mean())
-print("Actual home:", pl['home_goals'].mean())
+theta_hat = result.x # Best theta value
+a_hat, d_hat, h_hat = unpack(theta_hat) 
 
-mse_home = np.mean((pl['home_goals'] - pl['lambda_home'])**2)
-mse_away = np.mean((pl['away_goals'] - pl['lambda_away'])**2)
+# Returns lambda for home and away team with mle estimation
+# Lambda is the expecgted number of goals each team scores
+def find_mle(home_team, away_team):
+    home = team_index[home_team]
+    away = team_index[away_team]
 
-print("MSE home:", mse_home)
-print("MSE away:", mse_away)
+    lambda_home = np.exp(a_hat[home] - d_hat[away] + h_hat)
+    lambda_away = np.exp(a_hat[away] - d_hat[home])
 
-# Now need to add MLE
+    return lambda_home, lambda_away
+
+# Find win probabilites and expected goals scored on 24/25 season
+result = simulate("Arsenal", "Chelsea", 10000, find_mle)
+for key, value in result.items():
+    print(f"{key}: {value:.3f}")
+
+
+
+
