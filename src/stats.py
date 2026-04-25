@@ -21,3 +21,12 @@ def log_likelihood(theta, home_index, away_index, home_goals, away_goals, number
           poisson.logpmf(away_goals, lambda_away).sum())
     
     return -ll
+
+def find_mle(home_team, away_team, team_index, a_hat, d_hat, h_hat):
+    home = team_index[home_team]
+    away = team_index[away_team]
+
+    lambda_home = np.exp(a_hat[home] - d_hat[away] + h_hat)
+    lambda_away = np.exp(a_hat[away] - d_hat[home])
+
+    return lambda_home, lambda_away
